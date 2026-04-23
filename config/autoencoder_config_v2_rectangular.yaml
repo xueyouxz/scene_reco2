@@ -5,8 +5,6 @@ base_config: "./base_autoencoder_v2.yaml"
 data_processing:
   grid_height: 700
   grid_width: 400
-  input_height: 700
-  input_width: 400
 
 training_config:
   epochs: 10
@@ -19,4 +17,3 @@ visualization_config:
 
 output_config:
   model_save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/models_rect"
-  logs_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/logs_rect"
