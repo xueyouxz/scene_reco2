@@ -322,6 +322,13 @@ class SceneMaskGenerator:
         """
         构造从全局坐标到第一帧ego局部坐标的2D仿射变换。
 
+        坐标约定：
+        - 局部 x 轴对应车辆左侧方向
+        - 局部 y 轴对应车辆后方方向
+
+        因此第一帧 ego 的前进方向落在局部 -y 轴上。结合当前栅格化和
+        可视化的 y 轴处理，直行轨迹会显示为竖直朝上。
+
         Shapely affine_transform 参数顺序为:
         x' = a * x + b * y + xoff
         y' = d * x + e * y + yoff
@@ -332,12 +339,12 @@ class SceneMaskGenerator:
         sin_yaw = np.sin(yaw)
 
         return (
-            cos_yaw,
-            sin_yaw,
             -sin_yaw,
             cos_yaw,
-            -cos_yaw * tx - sin_yaw * ty,
+            -cos_yaw,
+            -sin_yaw,
             sin_yaw * tx - cos_yaw * ty,
+            cos_yaw * tx + sin_yaw * ty,
         )
 
     def _transform_points_to_first_ego(self, points: np.ndarray, reference_pose: Dict) -> np.ndarray:
