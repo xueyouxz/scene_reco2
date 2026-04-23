@@ -308,6 +308,65 @@ class SceneMaskGenerator:
                 return box(center_x - self.map_size[0] / 2, center_y - self.map_size[1] / 2,
                            center_x + self.map_size[0] / 2, center_y + self.map_size[1] / 2)
 
+    def _get_ego_poses(self, samples: List[Dict]) -> List[Dict]:
+        """获取场景中每个sample对应的ego pose。"""
+        ego_poses = []
+        for sample in samples:
+            lidar_token = sample['data']['LIDAR_TOP']
+            sd_rec = self.nusc.get('sample_data', lidar_token)
+            pose_record = self.nusc.get('ego_pose', sd_rec['ego_pose_token'])
+            ego_poses.append(pose_record)
+        return ego_poses
+
+    def _global_to_first_ego_affine(self, reference_pose: Dict) -> Tuple[float, float, float, float, float, float]:
+        """
+        构造从全局坐标到第一帧ego局部坐标的2D仿射变换。
+
+        Shapely affine_transform 参数顺序为:
+        x' = a * x + b * y + xoff
+        y' = d * x + e * y + yoff
+        """
+        tx, ty = reference_pose['translation'][:2]
+        yaw = quaternion_yaw(Quaternion(reference_pose['rotation']))
+        cos_yaw = np.cos(yaw)
+        sin_yaw = np.sin(yaw)
+
+        return (
+            cos_yaw,
+            sin_yaw,
+            -sin_yaw,
+            cos_yaw,
+            -cos_yaw * tx - sin_yaw * ty,
+            sin_yaw * tx - cos_yaw * ty,
+        )
+
+    def _transform_points_to_first_ego(self, points: np.ndarray, reference_pose: Dict) -> np.ndarray:
+        """将全局坐标点转换到第一帧ego局部坐标系。"""
+        if points.size == 0:
+            return points
+
+        affine_params = self._global_to_first_ego_affine(reference_pose)
+        a, b, d, e, xoff, yoff = affine_params
+        local_points = np.array(points, copy=True)
+        global_xy = local_points[:, :2].copy()
+
+        local_points[:, 0] = a * global_xy[:, 0] + b * global_xy[:, 1] + xoff
+        local_points[:, 1] = d * global_xy[:, 0] + e * global_xy[:, 1] + yoff
+        return local_points
+
+    def _transform_geometry_to_first_ego(self, geom, reference_pose: Dict):
+        """将Shapely地图几何从全局坐标转换到第一帧ego局部坐标系。"""
+        return affinity.affine_transform(geom, self._global_to_first_ego_affine(reference_pose))
+
+    def _convert_ego_trajectory_to_first_ego(self, ego_trajectory: Dict, reference_pose: Dict) -> Dict:
+        """返回第一帧ego局部坐标系下的自车轨迹，同时保留原始全局位置。"""
+        positions_global = np.array(ego_trajectory['positions'], copy=True)
+        local_trajectory = dict(ego_trajectory)
+        local_trajectory['positions_global'] = positions_global
+        local_trajectory['positions'] = self._transform_points_to_first_ego(positions_global, reference_pose)
+        local_trajectory['coordinate_frame'] = 'first_ego'
+        return local_trajectory
+
     def _generate_single_scene_mask(self, scene: Dict) -> Dict:
         """生成单个场景的掩码数据
         
@@ -329,20 +388,18 @@ class SceneMaskGenerator:
         # 获取场景的地图位置
         map_location = self.nusc.get('log', scene['log_token'])['location']
 
-        # 基于自车轨迹计算地图范围
-        ego_poses = []
-        for sample in samples:
-            lidar_token = sample['data']['LIDAR_TOP']
-            sd_rec = self.nusc.get('sample_data', lidar_token)
-            pose_record = self.nusc.get('ego_pose', sd_rec['ego_pose_token'])
-            ego_poses.append(pose_record)
+        # 基于自车轨迹计算全局地图范围，并以第一帧ego pose作为局部坐标系参考。
+        ego_poses = self._get_ego_poses(samples)
+        reference_pose = ego_poses[0]
+        ego_trajectory = self._convert_ego_trajectory_to_first_ego(ego_trajectory, reference_pose)
 
-        # 计算patch boxes和地图范围
+        # 先在全局坐标中查询地图，再把几何和范围转换到第一帧ego局部坐标系后栅格化。
         sample_patch_boxes = self.get_sample_patch_box(ego_poses)
-        map_range = self.get_map_range(sample_patch_boxes)
+        global_map_range = self.get_map_range(sample_patch_boxes)
+        map_range = self._transform_geometry_to_first_ego(global_map_range, reference_pose)
 
         # 使用nuScenes-devkit的方式生成多通道地图掩码
-        map_masks = self._generate_map_mask(map_location, map_range)
+        map_masks = self._generate_map_mask(map_location, global_map_range, map_range, reference_pose)
 
         # 生成自车轨迹掩码
         ego_mask = self._rasterize_ego_trajectory(ego_trajectory, map_range)
@@ -361,8 +418,11 @@ class SceneMaskGenerator:
             'scene_name': scene_name,
             'map_location': map_location,
             'map_range': map_range,
+            'global_map_range': global_map_range,
             'range_center': range_center,
             'range_size': range_size,
+            'coordinate_frame': 'first_ego',
+            'reference_pose': reference_pose,
             'ego_trajectory': ego_trajectory,
             'masks': map_masks,  # 多通道掩码字典
             'grid_info': {
@@ -404,12 +464,14 @@ class SceneMaskGenerator:
             timestamps.append(sample['timestamp'])
 
         positions = np.array(positions)
+        raw_positions = positions.copy()
         rotations = np.array(rotations)
         timestamps = np.array(timestamps)
 
         # 如果启用轨迹平滑
         if self.trajectory_smoothing:
             positions = _smooth_trajectory(positions)
+            positions[0] = raw_positions[0]
 
         return {
             'positions': positions,
@@ -417,15 +479,16 @@ class SceneMaskGenerator:
             'timestamps': timestamps
         }
 
-    def _generate_map_mask(self, map_location: str, map_range: Polygon) -> Dict[str, np.ndarray]:
+    def _generate_map_mask(self, map_location: str, global_map_range: Polygon,
+                           local_map_range: Polygon, reference_pose: Dict) -> Dict[str, np.ndarray]:
         """
-        使用多边形范围生成地图掩码，并对地图元素进行裁剪
+        使用全局范围查询地图元素，转换到第一帧ego局部坐标系后生成地图掩码。
         
         Returns:
             Dict[str, np.ndarray]: 每个图层一个掩码的字典
         """
-        # 获取地图范围的边界框
-        bounds = map_range.bounds  # (minx, miny, maxx, maxy)
+        # 获取局部地图范围的边界框
+        bounds = local_map_range.bounds  # (minx, miny, maxx, maxy)
         range_width = bounds[2] - bounds[0]
         range_height = bounds[3] - bounds[1]
 
@@ -471,7 +534,7 @@ class SceneMaskGenerator:
                     try:
                         # 获取在地图范围内的记录
                         records = map_api.get_records_in_patch(
-                            map_range.bounds,
+                            global_map_range.bounds,
                             layer_names=[record_name],
                             mode='intersect'
                         )
@@ -503,11 +566,14 @@ class SceneMaskGenerator:
                                 else:
                                     continue
 
-                                # 与地图范围做交集裁剪
+                                # 与全局地图范围做交集裁剪，再转换到第一帧ego局部坐标。
                                 if geom.is_valid and not geom.is_empty:
-                                    clipped_geom = geom.intersection(map_range)
+                                    clipped_geom = geom.intersection(global_map_range)
                                     if not clipped_geom.is_empty:
-                                        geometries.append(clipped_geom)
+                                        local_geom = self._transform_geometry_to_first_ego(clipped_geom, reference_pose)
+                                        local_geom = local_geom.intersection(local_map_range)
+                                        if not local_geom.is_empty:
+                                            geometries.append(local_geom)
                             except Exception as e:
                                 print(f"警告：处理 {record_name} 记录 {record_token} 时出错: {e}")
                                 continue
@@ -605,11 +671,11 @@ class SceneMaskGenerator:
 
     def _world_to_pixel_unified(self, world_coords: np.ndarray, bounds: Tuple) -> np.ndarray:
         """
-        统一的世界坐标到像素坐标转换方法
-        与地图掩码使用相同的坐标转换方式
+        统一的局部坐标到像素坐标转换方法。
+        当前输入坐标已经位于第一帧ego局部坐标系。
         
         Args:
-            world_coords: 世界坐标数组 [N, 2]
+            world_coords: 局部坐标数组 [N, 2]
             bounds: 边界框 (minx, miny, maxx, maxy)
             
         Returns:
@@ -631,7 +697,7 @@ class SceneMaskGenerator:
 
     def _rasterize_ego_trajectory(self, ego_trajectory: Dict, map_range: Polygon) -> np.ndarray:
         """
-        栅格化自车轨迹，使用与地图掩码相同的坐标转换方式
+        栅格化第一帧ego局部坐标系下的自车轨迹，使用与地图掩码相同的坐标转换方式。
         """
         # 获取地图范围的边界框
         bounds = map_range.bounds  # (minx, miny, maxx, maxy)
@@ -770,6 +836,7 @@ class SceneMaskGenerator:
             'grid_size': [self.grid_width, self.grid_height],
             'enabled_layers': self.enabled_layers,
             'ego_size': self.ego_size,
+            'coordinate_frame': 'first_ego',
         }
 
     def save_scene_masks(self, scene_masks_data: Dict, filename: str = None) -> str:

@@ -394,7 +394,7 @@ class WarmupScheduler:
 
 def main():
     """主函数"""
-    config_path = '/config/autoencoder_config_v2_3channels.yaml'
+    config_path = Path(__file__).resolve().parents[3] / 'config' / 'autoencoder_config_v2_3channels.yaml'
     config = load_config(config_path)
 
     trainer = ImprovedAutoEncoderTrainer(config)

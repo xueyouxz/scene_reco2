@@ -1,0 +1,45 @@
+# 本地nuScenes-mini掩码生成配置，用于功能验证。
+# 正式训练数据路径仍使用 map_mask_config.yaml 中的远程服务器配置。
+
+base_config: "./base_dataset.yaml"
+
+dataset_config:
+  version: "mini"
+  data_split: "val"
+  root_path: "/Users/xyxz/Data/nuscenes-mini"
+
+output_config:
+  save_path: "./data/map_masks_mini"
+  filename_prefix: "scene_raster_first_ego"
+
+processing_config:
+  max_scenes: 1
+  grid_resolution: 0.2
+  map_size: [15, 30]
+
+ego_vehicle_config:
+  size: [4.5, 1.8, 1.5]
+  trajectory_smoothing: true
+
+map_layers_config:
+  enabled_layers:
+    - drivable_area
+    - ped_crossing
+    - divider
+
+visualization_config:
+  generate_visualizations: true
+  figure_size: [12, 12]
+  dpi: 150
+  color_map:
+    background: [0, 0, 0]
+    drivable_area: [128, 128, 128]
+    ped_crossing: [255, 0, 0]
+    divider: [255, 255, 0]
+    boundary: [0, 0, 255]
+    ego_trajectory: [0, 255, 0]
+
+parallel_config:
+  enabled: false
+  num_workers: 1
+  batch_size: 1

@@ -10,21 +10,14 @@ data_processing:
   grid_width: 512
   use_ego_trajectory: true
   base_channels: 3
-  input_channels: 4
-  input_height: 512
-  input_width: 512
   normalize: true
 
 model_config:
   encoder:
     hidden_dim: 1024
     use_attention: true
-    use_residual: true
-    dropout_rate: 0.2
   decoder:
     use_skip_connections: true
-    use_attention: true
-    upsampling_mode: "bilinear"
 
 training_config:
   batch_size: 32
@@ -76,6 +69,5 @@ device_config:
 
 output_config:
   model_save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/models"
-  logs_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/logs"
 
 random_seed: 42

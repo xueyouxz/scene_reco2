@@ -4,7 +4,6 @@ base_config: "./base_autoencoder_v2.yaml"
 
 data_processing:
   use_ego_trajectory: false
-  input_channels: 3
 
 training_config:
   epochs: 10
@@ -19,4 +18,3 @@ visualization_config:
 
 output_config:
   model_save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/output/models_3ch"
-  logs_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/logs"

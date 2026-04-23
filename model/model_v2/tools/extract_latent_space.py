@@ -359,7 +359,7 @@ class LatentSpaceExtractor:
 
 
 def main():
-    config_path = '/home/zhangxueyou/PycharmProjects/scene_reco2/config/autoencoder_config_v2_3channels.yaml'
+    config_path = Path(__file__).resolve().parents[3] / 'config' / 'autoencoder_config_v2_3channels.yaml'
     model_path = '/home/zhangxueyou/PycharmProjects/scene_reco2/ckpt/checkpoints_3ch/best_model.pth'
     output = '/home/zhangxueyou/PycharmProjects/scene_reco2/output/latent_space_3channels'
 

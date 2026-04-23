@@ -387,8 +387,7 @@ class AutoencoderInference:
 
 def main():
     """主函数"""
-    # 配置文件路径
-    config_path = '/config/autoencoder_config_v1.yaml'
+    config_path = Path(__file__).resolve().parents[3] / 'config' / 'base_autoencoder_v1.yaml'
 
     # 加载配置
     config = load_config(config_path)
