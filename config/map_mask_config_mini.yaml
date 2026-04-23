@@ -10,6 +10,7 @@ dataset_config:
 
 output_config:
   save_path: "./data/map_masks_mini"
+  vector_save_path: "./data/vector_maps_mini"
   filename_prefix: "scene_raster_first_ego"
 
 processing_config:

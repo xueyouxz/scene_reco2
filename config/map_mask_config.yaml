@@ -10,6 +10,7 @@ dataset_config:
 
 output_config:
   save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/data/map_masks"
+  vector_save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/data/vector_maps"
   filename_prefix: "scene_raster"
 
 processing_config:

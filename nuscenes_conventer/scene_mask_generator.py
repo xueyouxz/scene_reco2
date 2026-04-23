@@ -1,7 +1,8 @@
 import os
+import json
 import pickle
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 
 import cv2
 import matplotlib.pyplot as plt
@@ -12,7 +13,7 @@ from nuscenes.map_expansion.map_api import NuScenesMap, NuScenesMapExplorer
 from nuscenes.nuscenes import NuScenes
 from pyquaternion import Quaternion
 from shapely import affinity
-from shapely.geometry import LineString, Polygon, box
+from shapely.geometry import LineString, Polygon, box, mapping
 from shapely.ops import unary_union
 from tqdm import tqdm
 
@@ -149,6 +150,18 @@ class SceneMaskGenerator:
     def _get_scenes_to_process(self) -> List[Dict]:
         """获取要处理的场景列表"""
         data_split = self.config['dataset_config']['data_split']
+        scene_names = self._get_scene_names_for_split(data_split)
+
+        # 过滤可用场景
+        available_scenes = []
+        for scene in self.nusc.scene:
+            if scene['name'] in scene_names:
+                available_scenes.append(scene)
+
+        return available_scenes
+
+    def _get_scene_names_for_split(self, data_split: str) -> List[str]:
+        """根据配置版本和split返回nuScenes场景名列表。"""
         version = self.config['dataset_config']['version']
 
         # 获取场景分割
@@ -173,7 +186,11 @@ class SceneMaskGenerator:
         else:
             raise ValueError(f'Unknown version: {version}')
 
-        # 过滤可用场景
+        return scene_names
+
+    def _get_scenes_for_split(self, data_split: str) -> List[Dict]:
+        """获取指定split中本地可用的场景。"""
+        scene_names = self._get_scene_names_for_split(data_split)
         available_scenes = []
         for scene in self.nusc.scene:
             if scene['name'] in scene_names:
@@ -439,6 +456,187 @@ class SceneMaskGenerator:
                 'origin': [bounds[0], bounds[1]]
             }
         }
+
+    def generate_scene_vector_maps(self, splits_to_process: List[str] = None) -> Dict[str, int]:
+        """按split导出每个场景的局部坐标系矢量地图JSON。"""
+        if splits_to_process is None:
+            version = self.config['dataset_config']['version']
+            data_split = self.config['dataset_config']['data_split']
+            if data_split in ['train', 'val', 'test']:
+                splits_to_process = [data_split]
+            elif version == 'test':
+                splits_to_process = ['test']
+            else:
+                splits_to_process = ['train', 'val']
+
+        split_counts = {}
+        for split in splits_to_process:
+            scenes_to_process = self._get_scenes_for_split(split)
+            exported = 0
+            for scene_idx, scene in enumerate(tqdm(scenes_to_process, desc=f"Exporting {split} vector maps")):
+                if self.max_scenes > 0 and scene_idx >= self.max_scenes:
+                    break
+
+                scene_vector_data = self._generate_single_scene_vector_map(scene, split)
+                self.save_scene_vector_map_json(scene_vector_data, split)
+                exported += 1
+
+            split_counts[split] = exported
+
+        return split_counts
+
+    def _generate_single_scene_vector_map(self, scene: Dict, split: str) -> Dict:
+        """生成单个场景的矢量地图数据，不包含轨迹。"""
+        scene_token = scene['token']
+        scene_name = scene['name']
+        samples = self._get_scene_samples(scene_token)
+        map_location = self.nusc.get('log', scene['log_token'])['location']
+
+        ego_poses = self._get_ego_poses(samples)
+        reference_pose = ego_poses[0]
+        sample_patch_boxes = self.get_sample_patch_box(ego_poses)
+        global_map_range = self.get_map_range(sample_patch_boxes)
+        map_range = self._transform_geometry_to_first_ego(global_map_range, reference_pose)
+        bounds = map_range.bounds
+
+        return {
+            'scene_token': scene_token,
+            'scene_name': scene_name,
+            'split': split,
+            'map_location': map_location,
+            'coordinate_frame': 'first_ego',
+            'reference_pose': self._serialize_reference_pose(reference_pose),
+            'map_range': mapping(map_range),
+            'range_center': [
+                float((bounds[0] + bounds[2]) / 2),
+                float((bounds[1] + bounds[3]) / 2),
+            ],
+            'range_size': [
+                float(bounds[2] - bounds[0]),
+                float(bounds[3] - bounds[1]),
+            ],
+            'layers': self._extract_scene_vector_map(
+                map_location,
+                global_map_range,
+                map_range,
+                reference_pose,
+            ),
+        }
+
+    def _extract_scene_vector_map(self, map_location: str, global_map_range: Polygon,
+                                  local_map_range: Polygon, reference_pose: Dict) -> Dict[str, List[Dict]]:
+        """提取局部坐标系下的场景矢量地图，返回GeoJSON geometry列表。"""
+        vector_layers = {layer: [] for layer in self.enabled_layers}
+        map_api = self.nusc_maps[map_location]
+
+        layer_records = {
+            'drivable_area': 'drivable_area',
+            'ped_crossing': 'ped_crossing',
+            'divider': ['lane_divider', 'road_divider'],
+            'boundary': ['road_segment', 'lane'],
+        }
+
+        for target_layer in self.enabled_layers:
+            if target_layer not in layer_records:
+                continue
+
+            record_names = layer_records[target_layer]
+            if isinstance(record_names, str):
+                record_names = [record_names]
+
+            for record_name in record_names:
+                try:
+                    records = map_api.get_records_in_patch(
+                        global_map_range.bounds,
+                        layer_names=[record_name],
+                        mode='intersect',
+                    )
+                except Exception as e:
+                    print(f"警告：处理图层 {record_name} 时出错: {e}")
+                    continue
+
+                for record_token in records[record_name]:
+                    try:
+                        record = map_api.get(record_name, record_token)
+                        geom = self._extract_record_geometry(map_api, record_name, record)
+                        if geom is None or geom.is_empty or not geom.is_valid:
+                            continue
+
+                        clipped_geom = geom.intersection(global_map_range)
+                        if clipped_geom.is_empty:
+                            continue
+
+                        local_geom = self._transform_geometry_to_first_ego(clipped_geom, reference_pose)
+                        local_geom = local_geom.intersection(local_map_range)
+                        if local_geom.is_empty:
+                            continue
+
+                        vector_layers[target_layer].extend(self._serialize_geometries(local_geom))
+                    except Exception as e:
+                        print(f"警告：处理 {record_name} 记录 {record_token} 时出错: {e}")
+                        continue
+
+        return vector_layers
+
+    def _extract_record_geometry(self, map_api: NuScenesMap, record_name: str, record: Dict):
+        """从nuScenes地图记录中提取Shapely几何。"""
+        if record_name == 'drivable_area':
+            polygons = []
+            for polygon_token in record['polygon_tokens']:
+                poly = map_api.extract_polygon(polygon_token)
+                if poly.is_valid and not poly.is_empty:
+                    polygons.append(poly)
+            return unary_union(polygons) if polygons else None
+
+        if record_name in ['ped_crossing', 'road_segment', 'lane']:
+            return map_api.extract_polygon(record['polygon_token'])
+
+        if record_name in ['lane_divider', 'road_divider']:
+            return map_api.extract_line(record['line_token'])
+
+        return None
+
+    def _serialize_geometries(self, geom) -> List[Dict]:
+        """将Shapely几何拆分为前端可读的GeoJSON geometry字典。"""
+        if geom.is_empty:
+            return []
+
+        if geom.geom_type in ['Polygon', 'LineString']:
+            return [mapping(geom)]
+
+        if geom.geom_type in ['MultiPolygon', 'MultiLineString', 'GeometryCollection']:
+            serialized = []
+            for part in geom.geoms:
+                if part.is_valid and not part.is_empty:
+                    serialized.extend(self._serialize_geometries(part))
+            return serialized
+
+        return []
+
+    def _serialize_reference_pose(self, reference_pose: Dict) -> Dict[str, Any]:
+        """仅保留JSON友好的参考位姿字段。"""
+        return {
+            'translation': [float(v) for v in reference_pose['translation']],
+            'rotation': [float(v) for v in reference_pose['rotation']],
+            'timestamp': int(reference_pose['timestamp']),
+        }
+
+    def save_scene_vector_map_json(self, scene_vector_data: Dict, split: str) -> str:
+        """保存单个场景矢量地图JSON。"""
+        vector_save_path = self.config['output_config'].get('vector_save_path')
+        if vector_save_path is None:
+            mask_save_path = Path(self.config['output_config']['save_path'])
+            vector_save_path = str(mask_save_path.parent / 'vector_maps')
+
+        output_dir = Path(vector_save_path) / split
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        scene_name = scene_vector_data['scene_name']
+        file_path = output_dir / f"{scene_name}.json"
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(scene_vector_data, f, ensure_ascii=False, indent=2)
+
+        return str(file_path)
 
     def _get_scene_samples(self, scene_token: str) -> List[Dict]:
         """获取场景中的所有样本"""
