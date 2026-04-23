@@ -1,0 +1,45 @@
+# 地图掩码生成配置文件
+# 基于数据集基础配置，仅在此处定义场景掩码模块特有配置
+
+base_config: "./base_dataset.yaml"
+
+dataset_config:
+  version: "trainval"
+  data_split: "val"
+  root_path: "/home/public/nuscenes_datasets/nuscenes-trainval"
+
+output_config:
+  save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/data/map_masks"
+  filename_prefix: "scene_raster"
+
+processing_config:
+  max_scenes: -1
+  grid_resolution: 0.2
+  map_size: [15, 30]
+
+ego_vehicle_config:
+  size: [4.5, 1.8, 1.5]
+  trajectory_smoothing: true
+
+map_layers_config:
+  enabled_layers:
+    - drivable_area
+    - ped_crossing
+    - divider
+
+visualization_config:
+  generate_visualizations: true
+  figure_size: [12, 12]
+  dpi: 150
+  color_map:
+    background: [0, 0, 0]
+    drivable_area: [128, 128, 128]
+    ped_crossing: [255, 0, 0]
+    divider: [255, 255, 0]
+    boundary: [0, 0, 255]
+    ego_trajectory: [0, 255, 0]
+
+parallel_config:
+  enabled: true
+  num_workers: 4
+  batch_size: 4

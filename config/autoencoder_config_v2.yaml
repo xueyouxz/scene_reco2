@@ -1,0 +1,4 @@
+# 改进的自编码器模型配置文件
+# 基于 v2 基础配置，仅在此处覆盖特定项
+
+base_config: "./base_autoencoder_v2.yaml"

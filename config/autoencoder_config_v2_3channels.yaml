@@ -1,0 +1,22 @@
+# 改进的自编码器模型配置文件 - 3通道版本（不包含自车轨迹）
+
+base_config: "./base_autoencoder_v2.yaml"
+
+data_processing:
+  use_ego_trajectory: false
+  input_channels: 3
+
+training_config:
+  epochs: 10
+  loss_config:
+    channel_weights: [0.4, 0.4, 0.2]
+  checkpoint:
+    save_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/ckpt/checkpoints_3ch"
+
+visualization_config:
+  test_visualization:
+    results_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/ckpt/results_v2_3ch"
+
+output_config:
+  model_save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/output/models_3ch"
+  logs_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/logs"

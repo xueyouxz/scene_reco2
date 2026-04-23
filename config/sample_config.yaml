@@ -1,0 +1,25 @@
+# sample 数据转换配置
+# 基于数据集基础配置，仅在此处定义转换模块特有配置
+
+base_config: "./base_dataset.yaml"
+
+conversion_params:
+  version: "mini"
+  datasets_to_convert: "train"
+  output_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/data"
+  info_prefix: "nuscenes"
+  extra_tag: "vectorized"
+
+processing_params:
+  max_sweeps: 10
+  roi_size: [30, 60]
+  future_timesteps:
+    agents: 12
+    ego: 6
+  max_agents: 50
+  max_lanes: 30
+
+parallel_processing:
+  enabled: true
+  num_workers: 4
+  batch_size: 8

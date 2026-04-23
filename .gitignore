@@ -1,0 +1,9 @@
+tmp/
+.idea/
+.cursor/
+ckpt/
+data/
+output/
+test/
+__pycache__/
+.history/

@@ -1,0 +1,19 @@
+# 通用 nuScenes 数据集基础配置
+
+dataset_paths:
+  trainval:
+    root_path: "/home/public/nuscenes_datasets/nuscenes-trainval"
+    can_bus_path: "/home/public/nuscenes_datasets/nuscenes-trainval"
+  mini:
+    root_path: "/home/public/nuscenes_datasets/nuscenes-mini"
+    can_bus_path: "/home/public/nuscenes_datasets/nuscenes-mini"
+
+parallel_config:
+  enabled: true
+  num_workers: 4
+  batch_size: 4
+
+parallel_processing:
+  enabled: true
+  num_workers: 4
+  batch_size: 8

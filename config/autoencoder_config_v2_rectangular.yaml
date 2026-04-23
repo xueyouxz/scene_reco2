@@ -1,0 +1,22 @@
+# 改进的自编码器模型配置文件 - 矩形栅格版本
+
+base_config: "./base_autoencoder_v2.yaml"
+
+data_processing:
+  grid_height: 700
+  grid_width: 400
+  input_height: 700
+  input_width: 400
+
+training_config:
+  epochs: 10
+  checkpoint:
+    save_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/checkpoints_rect"
+
+visualization_config:
+  test_visualization:
+    results_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/results_v2_rect"
+
+output_config:
+  model_save_path: "/home/zhangxueyou/PycharmProjects/scene_reco2/models_rect"
+  logs_dir: "/home/zhangxueyou/PycharmProjects/scene_reco2/logs_rect"
